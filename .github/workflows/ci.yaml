@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Test & Lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Setup virtual environment
+        run: |
+          uv venv
+          uv sync --all-extras
+
+      - name: Run lints
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src/
+
+      - name: Run tests
+        run: uv run pytest -v --cov=rebalancer --cov-report=term-missing
+
+  build:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: playground-runner
+    name: Build & Push
+    steps:
+      - uses: gillouche/homelab-ci/actions/security-gate@main
+
+      - uses: actions/checkout@v4
+
+      - name: Login to Nexus
+        run: echo "${{ secrets.NEXUS_PASSWORD }}" | docker login nexus.gillouche.homelab -u "${{ secrets.NEXUS_USERNAME }}" --password-stdin
+
+      - name: Build image
+        run: |
+          docker build \
+            -t nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }} \
+            -t nexus.gillouche.homelab/longhorn-replica-rebalancer:latest \
+            .
+
+      - name: Trivy scan
+        uses: gillouche/homelab-ci/actions/trivy-scan@main
+        with:
+          image: nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }}
+          discord-webhook: ${{ secrets.DISCORD_SECURITY_WEBHOOK }}
+
+      - name: Push image
+        run: |
+          docker push nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }}
+          docker push nexus.gillouche.homelab/longhorn-replica-rebalancer:latest
+
+      - name: Notify Discord
+        if: always()
+        uses: gillouche/homelab-ci/actions/discord-notify@main
+        with:
+          webhook: ${{ secrets.DISCORD_CI_WEBHOOK }}
+          status: ${{ job.status }}
+          title: "longhorn-replica-rebalancer build"
+          message: "Commit: ${{ github.sha }}"

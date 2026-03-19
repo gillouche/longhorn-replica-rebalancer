@@ -1,0 +1,21 @@
+name: Notify Discord on Renovate PR
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  notify-renovate:
+    if: (startsWith(github.head_ref, 'renovate/') || github.event.pull_request.user.login == 'renovate[bot]') && github.repository_owner == 'gillouche'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: gillouche/homelab-ci/actions/renovate-notify@main
+        with:
+          webhook: ${{ secrets.DISCORD_RENOVATE_WEBHOOK }}
+          pr-title: ${{ github.event.pull_request.title }}
+          pr-url: ${{ github.event.pull_request.html_url }}
+          repo: ${{ github.repository }}
+          branch: ${{ github.event.pull_request.head.ref }}
