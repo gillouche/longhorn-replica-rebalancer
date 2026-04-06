@@ -40,30 +40,15 @@ def make_replica(
     }
 
 
+def make_nodes(count: int) -> list[dict]:
+    return [make_node(f"node-{i}") for i in range(count)]
+
+
 @pytest.fixture
 def three_nodes():
-    return [
-        make_node("homeserver1"),
-        make_node("homeserver2"),
-        make_node("homeserver3"),
-    ]
+    return make_nodes(3)
 
 
 @pytest.fixture
-def balanced_replicas():
-    return [
-        make_replica("vol-a-r1", "vol-a", "homeserver1"),
-        make_replica("vol-a-r2", "vol-a", "homeserver2"),
-        make_replica("vol-b-r1", "vol-b", "homeserver2"),
-        make_replica("vol-b-r2", "vol-b", "homeserver3"),
-    ]
-
-
-@pytest.fixture
-def imbalanced_replicas():
-    return [
-        make_replica("vol-a-r1", "vol-a", "homeserver1"),
-        make_replica("vol-a-r2", "vol-a", "homeserver2"),
-        make_replica("vol-b-r1", "vol-b", "homeserver1"),
-        make_replica("vol-b-r2", "vol-b", "homeserver2"),
-    ]
+def five_nodes():
+    return make_nodes(5)

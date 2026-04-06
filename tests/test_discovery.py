@@ -12,23 +12,23 @@ class TestGetStorageNodes:
         api = MagicMock()
         api.list_namespaced_custom_object.return_value = {
             "items": [
-                make_node("homeserver1", allow_scheduling=True),
-                make_node("homeserver2", allow_scheduling=True),
-                make_node("rpi4b8g1", allow_scheduling=False),
+                make_node("node-0", allow_scheduling=True),
+                make_node("node-1", allow_scheduling=True),
+                make_node("worker-0", allow_scheduling=False),
             ]
         }
 
         nodes = get_storage_nodes(api, NAMESPACE)
 
         assert len(nodes) == 2
-        assert nodes[0]["metadata"]["name"] == "homeserver1"
-        assert nodes[1]["metadata"]["name"] == "homeserver2"
+        assert nodes[0]["metadata"]["name"] == "node-0"
+        assert nodes[1]["metadata"]["name"] == "node-1"
 
     def test_returns_empty_when_no_schedulable_nodes(self):
         api = MagicMock()
         api.list_namespaced_custom_object.return_value = {
             "items": [
-                make_node("rpi4b8g1", allow_scheduling=False),
+                make_node("worker-0", allow_scheduling=False),
             ]
         }
 
@@ -98,9 +98,9 @@ class TestGetReplicas:
         api = MagicMock()
         api.list_namespaced_custom_object.return_value = {
             "items": [
-                make_replica("r1", "vol-a", "homeserver1"),
-                make_replica("r2", "vol-a", "homeserver2"),
-                make_replica("r3", "vol-b", "homeserver1", state="stopped"),
+                make_replica("r1", "vol-a", "node-0"),
+                make_replica("r2", "vol-a", "node-1"),
+                make_replica("r3", "vol-b", "node-0", state="stopped"),
             ]
         }
 

@@ -27,6 +27,16 @@ def map_replica_placement(
     return placement
 
 
+def get_volume_sizes(volumes: list[dict]) -> dict[str, int]:
+    sizes: dict[str, int] = {}
+    for vol in volumes:
+        name = vol.get("metadata", {}).get("name", "")
+        size = int(vol.get("spec", {}).get("size", "0"))
+        if name:
+            sizes[name] = size
+    return sizes
+
+
 def find_imbalanced_volumes(
     placement: dict[str, dict[str, list[str]]],
     storage_nodes: list[dict],
@@ -64,39 +74,60 @@ def count_replicas_per_node(
     return counts
 
 
+def _format_size(size_bytes: int) -> str:
+    if size_bytes >= 1024**3:
+        return f"{size_bytes / 1024**3:.0f}GB"
+    if size_bytes >= 1024**2:
+        return f"{size_bytes / 1024**2:.0f}MB"
+    return f"{size_bytes}B"
+
+
 def select_donor_and_volume(
     placement: dict[str, dict[str, list[str]]],
     imbalanced_volumes: list[str],
     storage_nodes: list[dict],
+    volume_sizes: dict[str, int] | None = None,
 ) -> tuple[str, str, str] | None:
     if not imbalanced_volumes:
         return None
 
+    if volume_sizes is None:
+        volume_sizes = {}
+
+    sorted_volumes = sorted(
+        imbalanced_volumes,
+        key=lambda v: volume_sizes.get(v, 0),
+    )
+
     node_counts = count_replicas_per_node(placement, storage_nodes)
     donor_node = max(node_counts, key=lambda n: node_counts[n])
 
-    for vol_name in imbalanced_volumes:
+    for vol_name in sorted_volumes:
         node_replicas = placement.get(vol_name, {})
         if node_replicas.get(donor_node):
             replica_name = node_replicas[donor_node][0]
+            size = volume_sizes.get(vol_name, 0)
             logger.info(
-                "Selected volume=%s, donor=%s (count=%d), replica=%s",
+                "Selected volume=%s (%s), donor=%s (count=%d), replica=%s",
                 vol_name,
+                _format_size(size) if size else "unknown size",
                 donor_node,
                 node_counts[donor_node],
                 replica_name,
             )
             return vol_name, donor_node, replica_name
 
-    for vol_name in imbalanced_volumes:
+    for vol_name in sorted_volumes:
         node_replicas = placement.get(vol_name, {})
         if node_replicas:
             best_node = max(node_replicas, key=lambda n: node_counts.get(n, 0))
             if node_replicas[best_node]:
                 replica_name = node_replicas[best_node][0]
+                size = volume_sizes.get(vol_name, 0)
                 logger.info(
-                    "Fallback selection: volume=%s, donor=%s, replica=%s",
+                    "Fallback selection: volume=%s (%s), donor=%s, replica=%s",
                     vol_name,
+                    _format_size(size) if size else "unknown size",
                     best_node,
                     replica_name,
                 )

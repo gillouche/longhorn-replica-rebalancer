@@ -43,6 +43,17 @@ def get_volumes(api: Any, namespace: str) -> list[dict]:
     return volumes
 
 
+def get_all_volumes(api: Any, namespace: str) -> list[dict]:
+    result = api.list_namespaced_custom_object(
+        group=LONGHORN_GROUP,
+        version=LONGHORN_VERSION,
+        namespace=namespace,
+        plural="volumes",
+    )
+    volumes: list[dict] = result.get("items", [])
+    return volumes
+
+
 def get_replicas(api: Any, namespace: str) -> list[dict]:
     result = api.list_namespaced_custom_object(
         group=LONGHORN_GROUP,
