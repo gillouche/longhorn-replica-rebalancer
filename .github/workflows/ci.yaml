@@ -166,20 +166,20 @@ jobs:
       - name: Build image
         run: |
           docker build \
-            -t nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }} \
-            -t nexus.gillouche.homelab/longhorn-replica-rebalancer:latest \
+            -t nexus.gillouche.homelab/docker-hosted/longhorn-replica-rebalancer:${{ github.sha }} \
+            -t nexus.gillouche.homelab/docker-hosted/longhorn-replica-rebalancer:latest \
             .
 
       - name: Trivy scan
         uses: gillouche/homelab-ci/actions/trivy-scan@main
         with:
-          image: nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }}
+          image: nexus.gillouche.homelab/docker-hosted/longhorn-replica-rebalancer:${{ github.sha }}
           discord-webhook: ${{ secrets.DISCORD_WEBHOOK_SECURITY_NOTIFICATIONS }}
 
       - name: Push image
         run: |
-          docker push nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }}
-          docker push nexus.gillouche.homelab/longhorn-replica-rebalancer:latest
+          docker push nexus.gillouche.homelab/docker-hosted/longhorn-replica-rebalancer:${{ github.sha }}
+          docker push nexus.gillouche.homelab/docker-hosted/longhorn-replica-rebalancer:latest
 
   finalize:
     name: Finalize
