@@ -84,59 +84,6 @@ jobs:
         env:
           AWS_PROFILE: nix
 
-  sonarqube:
-    name: SonarQube Analysis
-    needs: [security-check, test]
-    if: needs.security-check.outputs.is_safe == 'true'
-    runs-on: longhorn-replica-rebalancer-runner
-    timeout-minutes: 10
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Setup Nix Cache Profile
-        uses: gillouche/homelab-ci/actions/setup-aws-profile@main
-        with:
-          profile: nix
-          access-key-id: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
-          secret-access-key: ${{ secrets.NIX_CACHE_SECRET_KEY }}
-
-      - name: Setup Nix Environment
-        uses: gillouche/homelab-ci/actions/setup-nix-env@main
-
-      - name: Generate coverage report
-        run: |
-          { set +x; } 2>/dev/null
-          nix develop .#default --command bash -c '
-            set -e
-            uv venv
-            uv sync --all-extras
-            source .venv/bin/activate
-            pytest --cov=rebalancer --cov-report=xml:coverage.xml -q
-          '
-        env:
-          AWS_PROFILE: nix
-
-      - name: Run SonarQube Scanner
-        run: |
-          { set +x; } 2>/dev/null
-          nix develop .#ci --command sonar-scanner \
-            -Dsonar.projectKey=longhorn-replica-rebalancer \
-            -Dsonar.projectName=longhorn-replica-rebalancer \
-            -Dsonar.sources=src/ \
-            -Dsonar.tests=tests/ \
-            -Dsonar.python.coverage.reportPaths=coverage.xml \
-            -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.token=$SONAR_TOKEN \
-            -Dsonar.qualitygate.wait=true \
-            -Dsonar.exclusions=**/.venv/**,**/__pycache__/**
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          AWS_PROFILE: nix
-
   build:
     name: Build & Push
     needs: [security-check, test]
@@ -183,7 +130,7 @@ jobs:
 
   finalize:
     name: Finalize
-    needs: [security-check, test, sonarqube, build]
+    needs: [security-check, test, build]
     if: always() && needs.security-check.outputs.is_safe == 'true'
     runs-on: longhorn-replica-rebalancer-runner
     timeout-minutes: 5
@@ -227,7 +174,7 @@ jobs:
           echo "Pushing build artifacts to Nix Cache..."
           nix copy --to \
             "s3://nix-cache?endpoint=http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333&scheme=http&profile=nix" \
-            .#ci .#default
+            .#devShells.x86_64-linux.ci .#devShells.x86_64-linux.default
         env:
           AWS_PROFILE: nix
 

@@ -1,0 +1,112 @@
+name: SonarQube Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: none
+  actions: none
+  id-token: none
+
+jobs:
+  security-check:
+    name: Security Check
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'gillouche'
+    outputs:
+      is_safe: ${{ steps.gate.outputs.is_safe }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: gillouche/homelab-ci/actions/security-gate@main
+        id: gate
+
+  sonarqube:
+    name: Analyze longhorn-replica-rebalancer
+    needs: security-check
+    if: needs.security-check.outputs.is_safe == 'true'
+    runs-on: longhorn-replica-rebalancer-runner
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Nix Cache Profile
+        uses: gillouche/homelab-ci/actions/setup-aws-profile@main
+        with:
+          profile: "nix"
+          access-key-id: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+          secret-access-key: ${{ secrets.NIX_CACHE_SECRET_KEY }}
+
+      - name: Setup Nix Environment
+        uses: gillouche/homelab-ci/actions/setup-nix-env@main
+
+      - name: Run Tests with Coverage
+        run: |
+          { set +x; } 2>/dev/null
+          nix develop .#default --command bash -c '
+            set -e
+            uv venv .venv
+            source .venv/bin/activate
+            uv sync --all-extras
+
+            set +e
+            PYTHONPATH="src:." pytest tests/ \
+              --cov=src \
+              --cov-report=xml:coverage.xml \
+              --cov-report=term \
+              -q
+            PYTEST_EXIT=$?
+            set -e
+
+            if [ $PYTEST_EXIT -ne 0 ]; then
+              echo "::warning::pytest exited with code $PYTEST_EXIT"
+            fi
+
+            if [ -f "coverage.xml" ]; then
+              echo "Coverage report generated successfully"
+            else
+              echo "::warning::coverage.xml was not generated"
+            fi
+
+            deactivate
+          '
+        env:
+          AWS_PROFILE: "nix"
+
+      - name: Run SonarQube Scanner
+        run: |
+          { set +x; } 2>/dev/null
+          nix develop .#ci --command bash -c '
+            set -e
+
+            SONAR_ARGS=(
+              "-Dsonar.projectKey=longhorn-replica-rebalancer"
+              "-Dsonar.projectName=longhorn-replica-rebalancer"
+              "-Dsonar.sources=src/"
+              "-Dsonar.tests=tests/"
+              "-Dsonar.host.url=$SONAR_HOST_URL"
+              "-Dsonar.token=$SONAR_TOKEN"
+              "-Dsonar.qualitygate.wait=true"
+              "-Dsonar.exclusions=**/.venv/**,**/__pycache__/**"
+            )
+
+            if [ -f "coverage.xml" ]; then
+              echo "Found coverage report"
+              SONAR_ARGS+=("-Dsonar.python.coverage.reportPaths=coverage.xml")
+            else
+              echo "::warning::No coverage report found"
+            fi
+
+            sonar-scanner "${SONAR_ARGS[@]}"
+          '
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          AWS_PROFILE: "nix"
