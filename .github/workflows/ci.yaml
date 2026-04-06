@@ -2,12 +2,23 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
+    tags-ignore:
+      - '**'
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
+  checks: write
+  packages: none
+  actions: none
+  id-token: none
 
 jobs:
   security-check:
@@ -22,46 +33,14 @@ jobs:
         id: gate
 
   test:
+    name: Test & Lint
     needs: security-check
     if: needs.security-check.outputs.is_safe == 'true'
     runs-on: longhorn-replica-rebalancer-runner
-    name: Test & Lint
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install uv
-        run: pip install uv
-
-      - name: Setup virtual environment
-        run: |
-          uv venv
-          uv sync --all-extras
-
-      - name: Run lints
-        run: |
-          uv run ruff check .
-          uv run ruff format --check .
-          uv run mypy src/
-
-      - name: Run tests with coverage
-        run: |
-          uv run pytest -v \
-            --cov=rebalancer \
-            --cov-report=xml:coverage.xml \
-            --cov-report=term-missing
-
-  sonarqube:
-    needs: [security-check, test]
-    if: needs.security-check.outputs.is_safe == 'true'
-    runs-on: longhorn-replica-rebalancer-runner
-    name: SonarQube Analysis
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
+      - name: Checkout repository
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -69,7 +48,59 @@ jobs:
       - name: Setup Nix Cache Profile
         uses: gillouche/homelab-ci/actions/setup-aws-profile@main
         with:
-          profile: "nix"
+          profile: nix
+          access-key-id: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+          secret-access-key: ${{ secrets.NIX_CACHE_SECRET_KEY }}
+
+      - name: Setup Nix Environment
+        uses: gillouche/homelab-ci/actions/setup-nix-env@main
+
+      - name: Run lints
+        run: |
+          { set +x; } 2>/dev/null
+          nix develop .#default --command bash -c '
+            set -e
+            uv venv
+            uv sync --all-extras
+            source .venv/bin/activate
+            ruff check .
+            ruff format --check .
+            mypy src/
+          '
+        env:
+          AWS_PROFILE: nix
+
+      - name: Run tests with coverage
+        run: |
+          { set +x; } 2>/dev/null
+          nix develop .#default --command bash -c '
+            set -e
+            source .venv/bin/activate
+            pytest -v \
+              --cov=rebalancer \
+              --cov-report=xml:coverage.xml \
+              --cov-report=term-missing
+          '
+        env:
+          AWS_PROFILE: nix
+
+  sonarqube:
+    name: SonarQube Analysis
+    needs: [security-check, test]
+    if: needs.security-check.outputs.is_safe == 'true'
+    runs-on: longhorn-replica-rebalancer-runner
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Nix Cache Profile
+        uses: gillouche/homelab-ci/actions/setup-aws-profile@main
+        with:
+          profile: nix
           access-key-id: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
           secret-access-key: ${{ secrets.NIX_CACHE_SECRET_KEY }}
 
@@ -78,13 +109,20 @@ jobs:
 
       - name: Generate coverage report
         run: |
-          pip install uv
-          uv venv
-          uv sync --all-extras
-          uv run pytest --cov=rebalancer --cov-report=xml:coverage.xml -q
+          { set +x; } 2>/dev/null
+          nix develop .#default --command bash -c '
+            set -e
+            uv venv
+            uv sync --all-extras
+            source .venv/bin/activate
+            pytest --cov=rebalancer --cov-report=xml:coverage.xml -q
+          '
+        env:
+          AWS_PROFILE: nix
 
       - name: Run SonarQube Scanner
         run: |
+          { set +x; } 2>/dev/null
           nix develop .#ci --command sonar-scanner \
             -Dsonar.projectKey=longhorn-replica-rebalancer \
             -Dsonar.projectName=longhorn-replica-rebalancer \
@@ -97,18 +135,33 @@ jobs:
             -Dsonar.exclusions=**/.venv/**,**/__pycache__/**
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          AWS_PROFILE: "nix"
+          AWS_PROFILE: nix
 
   build:
-    needs: [security-check, test]
-    if: github.ref == 'refs/heads/main' && needs.security-check.outputs.is_safe == 'true'
-    runs-on: longhorn-replica-rebalancer-runner
     name: Build & Push
+    needs: [security-check, test]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.security-check.outputs.is_safe == 'true'
+    runs-on: longhorn-replica-rebalancer-runner
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-      - name: Login to Nexus
-        run: echo "${{ secrets.NEXUS_PASSWORD }}" | docker login nexus.gillouche.homelab -u "${{ secrets.NEXUS_USERNAME }}" --password-stdin
+      - name: Inject Nexus CA into Docker Daemon
+        run: |
+          sudo mkdir -p /etc/docker/certs.d/nexus.gillouche.homelab
+          sudo cp /usr/local/share/ca-certificates/nexus-ca.crt \
+            /etc/docker/certs.d/nexus.gillouche.homelab/ca.crt
+
+      - name: Login to Nexus registry
+        run: |
+          { set +x; } 2>/dev/null
+          echo "${{ secrets.NEXUS_PASSWORD }}" | docker login nexus.gillouche.homelab \
+            -u "${{ secrets.NEXUS_USERNAME }}" \
+            --password-stdin
 
       - name: Build image
         run: |
@@ -128,11 +181,94 @@ jobs:
           docker push nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }}
           docker push nexus.gillouche.homelab/longhorn-replica-rebalancer:latest
 
-      - name: Notify Discord
-        if: always()
+  finalize:
+    name: Finalize
+    needs: [security-check, test, sonarqube, build]
+    if: always() && needs.security-check.outputs.is_safe == 'true'
+    runs-on: longhorn-replica-rebalancer-runner
+    timeout-minutes: 5
+    steps:
+      - name: Setup Nix Cache Profile
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.test.result == 'success' &&
+          needs.build.result == 'success'
+        uses: gillouche/homelab-ci/actions/setup-aws-profile@main
+        with:
+          profile: nix
+          access-key-id: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+          secret-access-key: ${{ secrets.NIX_CACHE_SECRET_KEY }}
+
+      - name: Setup Nix Environment
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.test.result == 'success' &&
+          needs.build.result == 'success'
+        uses: gillouche/homelab-ci/actions/setup-nix-env@main
+
+      - name: Checkout repository
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.test.result == 'success' &&
+          needs.build.result == 'success'
+        uses: actions/checkout@v6
+
+      - name: Push to Nix Cache (Main Only)
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.test.result == 'success' &&
+          needs.build.result == 'success'
+        run: |
+          { set +x; } 2>/dev/null
+          echo "Pushing build artifacts to Nix Cache..."
+          nix copy --to \
+            "s3://nix-cache?endpoint=http://seaweedfs-s3.seaweedfs.svc.cluster.local:8333&scheme=http&profile=nix" \
+            .#ci .#default
+        env:
+          AWS_PROFILE: nix
+
+      - name: Send Success Notification
+        if: >-
+          needs.test.result == 'success' &&
+          (needs.build.result == 'success' || needs.build.result == 'skipped')
         uses: gillouche/homelab-ci/actions/discord-notify@main
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_GITHUB_ACTIONS }}
-          status: ${{ job.status }}
-          title: "longhorn-replica-rebalancer build"
-          message: "Commit: ${{ github.sha }}"
+          status: success
+          title: CI Pipeline Result
+          url: >-
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          message: "Build completed successfully"
+          fields: |
+            [
+              {"name": "Repository", "value": "${{ github.repository }}", "inline": true},
+              {"name": "Ref", "value": "${{ github.ref_name }}", "inline": true},
+              {"name": "Commit", "value": "`${{ github.sha }}`", "inline": false},
+              {"name": "Actor", "value": "${{ github.actor }}", "inline": true},
+              {"name": "Trigger", "value": "${{ github.event_name }}", "inline": true}
+            ]
+
+      - name: Send Failure Notification
+        if: >-
+          needs.test.result != 'success' ||
+          (needs.build.result != 'success' && needs.build.result != 'skipped')
+        uses: gillouche/homelab-ci/actions/discord-notify@main
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_GITHUB_ACTIONS }}
+          status: failure
+          title: CI Pipeline Result
+          url: >-
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          message: "Build failed"
+          fields: |
+            [
+              {"name": "Repository", "value": "${{ github.repository }}", "inline": true},
+              {"name": "Ref", "value": "${{ github.ref_name }}", "inline": true},
+              {"name": "Commit", "value": "`${{ github.sha }}`", "inline": false},
+              {"name": "Actor", "value": "${{ github.actor }}", "inline": true},
+              {"name": "Trigger", "value": "${{ github.event_name }}", "inline": true}
+            ]
