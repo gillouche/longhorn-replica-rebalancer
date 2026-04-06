@@ -12,6 +12,14 @@
         pkgs = import nixpkgs { inherit system; };
       in
       {
+        devShells.ci = pkgs.mkShell {
+          packages = [
+            pkgs.python314
+            pkgs.uv
+            pkgs.sonar-scanner-cli
+          ];
+        };
+
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.python314

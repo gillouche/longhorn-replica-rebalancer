@@ -10,16 +10,28 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  security-check:
+    name: Security Check
     runs-on: ubuntu-latest
-    name: Test & Lint
+    if: github.repository_owner == 'gillouche'
+    outputs:
+      is_safe: ${{ steps.gate.outputs.is_safe }}
     steps:
       - uses: actions/checkout@v6
+      - uses: gillouche/homelab-ci/actions/security-gate@main
+        id: gate
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+  test:
+    needs: security-check
+    if: needs.security-check.outputs.is_safe == 'true'
+    runs-on: longhorn-replica-rebalancer-runner
+    name: Test & Lint
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
         with:
-          python-version: "3.14"
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install uv
         run: pip install uv
@@ -35,17 +47,64 @@ jobs:
           uv run ruff format --check .
           uv run mypy src/
 
-      - name: Run tests
-        run: uv run pytest -v --cov=rebalancer --cov-report=term-missing
+      - name: Run tests with coverage
+        run: |
+          uv run pytest -v \
+            --cov=rebalancer \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing
+
+  sonarqube:
+    needs: [security-check, test]
+    if: needs.security-check.outputs.is_safe == 'true'
+    runs-on: longhorn-replica-rebalancer-runner
+    name: SonarQube Analysis
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Nix Cache Profile
+        uses: gillouche/homelab-ci/actions/setup-aws-profile@main
+        with:
+          profile: "nix"
+          access-key-id: ${{ secrets.NIX_CACHE_ACCESS_KEY }}
+          secret-access-key: ${{ secrets.NIX_CACHE_SECRET_KEY }}
+
+      - name: Setup Nix Environment
+        uses: gillouche/homelab-ci/actions/setup-nix-env@main
+
+      - name: Generate coverage report
+        run: |
+          pip install uv
+          uv venv
+          uv sync --all-extras
+          uv run pytest --cov=rebalancer --cov-report=xml:coverage.xml -q
+
+      - name: Run SonarQube Scanner
+        run: |
+          nix develop .#ci --command sonar-scanner \
+            -Dsonar.projectKey=longhorn-replica-rebalancer \
+            -Dsonar.projectName=longhorn-replica-rebalancer \
+            -Dsonar.sources=src/ \
+            -Dsonar.tests=tests/ \
+            -Dsonar.python.coverage.reportPaths=coverage.xml \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.token=$SONAR_TOKEN \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.exclusions=**/.venv/**,**/__pycache__/**
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          AWS_PROFILE: "nix"
 
   build:
-    needs: test
-    if: github.ref == 'refs/heads/main'
+    needs: [security-check, test]
+    if: github.ref == 'refs/heads/main' && needs.security-check.outputs.is_safe == 'true'
     runs-on: longhorn-replica-rebalancer-runner
     name: Build & Push
     steps:
-      - uses: gillouche/homelab-ci/actions/security-gate@main
-
       - uses: actions/checkout@v6
 
       - name: Login to Nexus
@@ -62,7 +121,7 @@ jobs:
         uses: gillouche/homelab-ci/actions/trivy-scan@main
         with:
           image: nexus.gillouche.homelab/longhorn-replica-rebalancer:${{ github.sha }}
-          discord-webhook: ${{ secrets.DISCORD_SECURITY_WEBHOOK }}
+          discord-webhook: ${{ secrets.DISCORD_WEBHOOK_SECURITY_NOTIFICATIONS }}
 
       - name: Push image
         run: |
@@ -73,7 +132,7 @@ jobs:
         if: always()
         uses: gillouche/homelab-ci/actions/discord-notify@main
         with:
-          webhook: ${{ secrets.DISCORD_CI_WEBHOOK }}
+          webhook: ${{ secrets.DISCORD_WEBHOOK_GITHUB_ACTIONS }}
           status: ${{ job.status }}
           title: "longhorn-replica-rebalancer build"
           message: "Commit: ${{ github.sha }}"
