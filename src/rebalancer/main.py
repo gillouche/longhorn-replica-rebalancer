@@ -34,9 +34,13 @@ def check_cluster_health(api: object, namespace: str, storage_nodes: list[dict])
 
     not_ready_nodes = []
     for node in storage_nodes:
-        conditions = node.get("status", {}).get("conditions", {})
-        ready = conditions.get("Ready", {})
-        if ready.get("status", "") != "True":
+        conditions = node.get("status", {}).get("conditions", [])
+        ready_status = "False"
+        for condition in conditions:
+            if condition.get("type") == "Ready":
+                ready_status = condition.get("status", "False")
+                break
+        if ready_status != "True":
             not_ready_nodes.append(node["metadata"]["name"])
 
     if not_ready_nodes:

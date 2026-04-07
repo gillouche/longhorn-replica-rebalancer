@@ -36,8 +36,14 @@ class TestCheckClusterHealth:
     def test_returns_true_when_all_healthy(self):
         api = MagicMock()
         nodes = [
-            {**make_node("node-0"), "status": {"conditions": {"Ready": {"status": "True"}}}},
-            {**make_node("node-1"), "status": {"conditions": {"Ready": {"status": "True"}}}},
+            {
+                **make_node("node-0"),
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            },
+            {
+                **make_node("node-1"),
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            },
         ]
         api.list_namespaced_custom_object.return_value = {
             "items": [
@@ -50,8 +56,14 @@ class TestCheckClusterHealth:
     def test_returns_false_when_node_not_ready(self):
         api = MagicMock()
         nodes = [
-            {**make_node("node-0"), "status": {"conditions": {"Ready": {"status": "True"}}}},
-            {**make_node("node-1"), "status": {"conditions": {"Ready": {"status": "False"}}}},
+            {
+                **make_node("node-0"),
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            },
+            {
+                **make_node("node-1"),
+                "status": {"conditions": [{"type": "Ready", "status": "False"}]},
+            },
         ]
         api.list_namespaced_custom_object.return_value = {"items": []}
 
@@ -60,7 +72,10 @@ class TestCheckClusterHealth:
     def test_returns_false_when_faulted_volume_exists(self):
         api = MagicMock()
         nodes = [
-            {**make_node("node-0"), "status": {"conditions": {"Ready": {"status": "True"}}}},
+            {
+                **make_node("node-0"),
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            },
         ]
         api.list_namespaced_custom_object.return_value = {
             "items": [
@@ -73,7 +88,10 @@ class TestCheckClusterHealth:
     def test_returns_false_when_degraded_volume_exists(self):
         api = MagicMock()
         nodes = [
-            {**make_node("node-0"), "status": {"conditions": {"Ready": {"status": "True"}}}},
+            {
+                **make_node("node-0"),
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            },
         ]
         api.list_namespaced_custom_object.return_value = {
             "items": [
@@ -107,7 +125,10 @@ class TestRun:
 
     def _healthy_nodes(self, count):
         return [
-            {**make_node(f"node-{i}"), "status": {"conditions": {"Ready": {"status": "True"}}}}
+            {
+                **make_node(f"node-{i}"),
+                "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+            }
             for i in range(count)
         ]
 
