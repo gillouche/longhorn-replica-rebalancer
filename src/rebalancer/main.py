@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 import sys
+import urllib.request
 
 from kubernetes import client, config
 
@@ -212,13 +214,42 @@ def run(cfg: dict) -> int:
     return 0
 
 
+def send_discord_notification(webhook_url: str, message: str, success: bool) -> None:
+    color = 3066993 if success else 15158332
+    title = "Replica Rebalancer" if success else "Replica Rebalancer FAILED"
+    payload = json.dumps(
+        {
+            "embeds": [
+                {
+                    "title": title,
+                    "description": message,
+                    "color": color,
+                }
+            ]
+        }
+    ).encode()
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        logger.warning("Failed to send Discord notification: %s", e)
+
+
 def main() -> None:
     cfg = load_config()
     logging.basicConfig(
         level=getattr(logging, cfg["log_level"]),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    sys.exit(run(cfg))
+    webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
+    exit_code = run(cfg)
+    if webhook_url and exit_code != 0:
+        send_discord_notification(webhook_url, "Rebalancer failed. Check CronJob logs.", False)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
