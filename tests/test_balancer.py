@@ -360,6 +360,83 @@ class TestRealisticScenario:
         assert len(imbalanced) == 8
 
 
+class TestEdgeCases:
+    def test_stopped_replica_excluded_from_placement(self):
+        volumes = [make_volume("vol-a")]
+        replicas = [
+            make_replica("r1", "vol-a", "node-0", state="running"),
+            make_replica("r2", "vol-a", "node-2", state="running"),
+            make_replica("r3", "vol-a", "node-1", state="stopped"),
+        ]
+
+        placement = map_replica_placement(volumes, replicas)
+
+        assert "node-1" not in placement["vol-a"]
+        assert set(placement["vol-a"].keys()) == {"node-0", "node-2"}
+
+    def test_volume_with_3_running_replicas_on_all_nodes_not_imbalanced(self, three_nodes):
+        placement = {
+            "vol-3rep": {"node-0": ["r1"], "node-1": ["r2"], "node-2": ["r3"]},
+            "vol-normal": {"node-0": ["r4"], "node-2": ["r5"]},
+        }
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert "vol-3rep" not in imbalanced
+        assert "vol-normal" in imbalanced
+
+    def test_volume_with_3_running_replicas_skipped_by_donor_selection(self, three_nodes):
+        placement = {
+            "vol-3rep": {"node-0": ["r1"], "node-1": ["r2"], "node-2": ["r3"]},
+            "vol-movable": {"node-0": ["r4"], "node-2": ["r5"]},
+        }
+        imbalanced = ["vol-3rep", "vol-movable"]
+
+        result = select_donor_and_volume(placement, imbalanced, three_nodes)
+
+        assert result is not None
+        vol_name, _, _ = result
+        assert vol_name == "vol-movable"
+
+    def test_16_1_16_with_one_3replica_volume(self, three_nodes):
+        placement = {}
+        sizes = {}
+        placement["pvc-3rep"] = {
+            "node-0": ["3rep-r1"],
+            "node-1": ["3rep-r2"],
+            "node-2": ["3rep-r3"],
+        }
+        sizes["pvc-3rep"] = 5368709120
+        for i in range(15):
+            placement[f"pvc-{i}"] = {
+                "node-0": [f"pvc-{i}-r1"],
+                "node-2": [f"pvc-{i}-r2"],
+            }
+            sizes[f"pvc-{i}"] = 5368709120 * (i + 2)
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert "pvc-3rep" not in imbalanced
+        assert len(imbalanced) == 15
+
+    def test_failed_replica_not_counted_in_node_totals(self, three_nodes):
+        volumes = [make_volume("vol-a"), make_volume("vol-b")]
+        replicas = [
+            make_replica("r1", "vol-a", "node-0", state="running"),
+            make_replica("r2", "vol-a", "node-2", state="running"),
+            make_replica("r3", "vol-a", "node-1", state="stopped"),
+            make_replica("r4", "vol-b", "node-0", state="running"),
+            make_replica("r5", "vol-b", "node-2", state="running"),
+        ]
+
+        placement = map_replica_placement(volumes, replicas)
+        counts = count_replicas_per_node(placement, three_nodes)
+
+        assert counts["node-0"] == 2
+        assert counts["node-1"] == 0
+        assert counts["node-2"] == 2
+
+
 class TestGetVolumeSizes:
     def test_extracts_sizes_from_volumes(self):
         volumes = [
