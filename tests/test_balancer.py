@@ -153,6 +153,29 @@ class TestSelectDonorAndVolume:
         assert vol_name in imbalanced
         assert donor_node in ("node-0", "node-1")
 
+    def test_skips_volume_with_no_eligible_target_node(self, three_nodes):
+        placement = {
+            "vol-stuck": {"node-0": ["r1"], "node-1": ["r2"], "node-2": ["r3"]},
+            "vol-movable": {"node-0": ["r4"], "node-2": ["r5"]},
+        }
+        imbalanced = ["vol-stuck", "vol-movable"]
+
+        result = select_donor_and_volume(placement, imbalanced, three_nodes)
+
+        assert result is not None
+        vol_name, _, _ = result
+        assert vol_name == "vol-movable"
+
+    def test_returns_none_when_no_volumes_have_eligible_targets(self, three_nodes):
+        placement = {
+            "vol-a": {"node-0": ["r1"], "node-1": ["r2"], "node-2": ["r3"]},
+        }
+        imbalanced = ["vol-a"]
+
+        result = select_donor_and_volume(placement, imbalanced, three_nodes)
+
+        assert result is None
+
     def test_returns_none_when_no_imbalanced_volumes(self, three_nodes):
         placement = {"vol-a": {"node-0": ["r1"], "node-1": ["r2"]}}
 
@@ -276,6 +299,30 @@ class TestRealisticScenario:
         counts = count_replicas_per_node(placement, three_nodes)
         assert counts["node-2"] == 1
         assert counts[donor_node] == 15
+
+    def test_15_1_16_skips_volume_already_on_least_loaded(self, three_nodes):
+        placement = {}
+        sizes = {}
+        placement["pvc-already-moved"] = {
+            "node-1": ["moved-r1"],
+            "node-2": ["moved-r2"],
+        }
+        sizes["pvc-already-moved"] = 5368709120
+        for i in range(15):
+            placement[f"pvc-{i}"] = {
+                "node-0": [f"pvc-{i}-r1"],
+                "node-2": [f"pvc-{i}-r2"],
+            }
+            sizes[f"pvc-{i}"] = 5368709120 * (i + 2)
+
+        imbalanced = list(placement.keys())
+
+        result = select_donor_and_volume(placement, imbalanced, three_nodes, sizes)
+
+        assert result is not None
+        vol_name, donor_node, _ = result
+        assert vol_name != "pvc-already-moved"
+        assert donor_node == "node-2"
 
     def test_even_distribution_is_balanced(self, three_nodes):
         placement = {}

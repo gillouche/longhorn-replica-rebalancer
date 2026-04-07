@@ -82,6 +82,18 @@ def _format_size(size_bytes: int) -> str:
     return f"{size_bytes}B"
 
 
+def _has_eligible_target(
+    vol_name: str,
+    donor_node: str,
+    placement: dict[str, dict[str, list[str]]],
+    node_names: set[str],
+) -> bool:
+    nodes_with_replica = set(placement.get(vol_name, {}).keys())
+    nodes_without_replica = node_names - nodes_with_replica
+    eligible = nodes_without_replica - {donor_node}
+    return len(eligible) > 0
+
+
 def select_donor_and_volume(
     placement: dict[str, dict[str, list[str]]],
     imbalanced_volumes: list[str],
@@ -99,38 +111,61 @@ def select_donor_and_volume(
         key=lambda v: volume_sizes.get(v, 0),
     )
 
+    node_names = {n["metadata"]["name"] for n in storage_nodes}
     node_counts = count_replicas_per_node(placement, storage_nodes)
+    least_loaded_node = min(node_counts, key=lambda n: node_counts[n])
     donor_node = max(node_counts, key=lambda n: node_counts[n])
 
     for vol_name in sorted_volumes:
         node_replicas = placement.get(vol_name, {})
-        if node_replicas.get(donor_node):
-            replica_name = node_replicas[donor_node][0]
-            size = volume_sizes.get(vol_name, 0)
-            logger.info(
-                "Selected volume=%s (%s), donor=%s (count=%d), replica=%s",
+        if not node_replicas.get(donor_node):
+            continue
+        if not _has_eligible_target(vol_name, donor_node, placement, node_names):
+            logger.debug(
+                "Skipping volume=%s: no eligible target node after removing from %s",
                 vol_name,
-                _format_size(size) if size else "unknown size",
                 donor_node,
-                node_counts[donor_node],
-                replica_name,
             )
-            return vol_name, donor_node, replica_name
+            continue
+        if least_loaded_node in node_replicas:
+            logger.debug(
+                "Skipping volume=%s: least-loaded node %s already has a replica",
+                vol_name,
+                least_loaded_node,
+            )
+            continue
+        replica_name = node_replicas[donor_node][0]
+        size = volume_sizes.get(vol_name, 0)
+        logger.info(
+            "Selected volume=%s (%s), donor=%s (count=%d), replica=%s",
+            vol_name,
+            _format_size(size) if size else "unknown size",
+            donor_node,
+            node_counts[donor_node],
+            replica_name,
+        )
+        return vol_name, donor_node, replica_name
 
     for vol_name in sorted_volumes:
         node_replicas = placement.get(vol_name, {})
-        if node_replicas:
-            best_node = max(node_replicas, key=lambda n: node_counts.get(n, 0))
-            if node_replicas[best_node]:
-                replica_name = node_replicas[best_node][0]
-                size = volume_sizes.get(vol_name, 0)
-                logger.info(
-                    "Fallback selection: volume=%s (%s), donor=%s, replica=%s",
-                    vol_name,
-                    _format_size(size) if size else "unknown size",
-                    best_node,
-                    replica_name,
-                )
-                return vol_name, best_node, replica_name
+        if not node_replicas:
+            continue
+        best_node = max(node_replicas, key=lambda n: node_counts.get(n, 0))
+        if not node_replicas[best_node]:
+            continue
+        if not _has_eligible_target(vol_name, best_node, placement, node_names):
+            continue
+        if least_loaded_node in node_replicas:
+            continue
+        replica_name = node_replicas[best_node][0]
+        size = volume_sizes.get(vol_name, 0)
+        logger.info(
+            "Fallback selection: volume=%s (%s), donor=%s, replica=%s",
+            vol_name,
+            _format_size(size) if size else "unknown size",
+            best_node,
+            replica_name,
+        )
+        return vol_name, best_node, replica_name
 
     return None
