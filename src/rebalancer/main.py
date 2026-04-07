@@ -29,27 +29,17 @@ def load_config() -> dict:
     }
 
 
-def check_cluster_health(api: object, namespace: str, storage_nodes: list[dict]) -> bool:
-    all_volumes = get_all_volumes(api, namespace)
+def _is_node_ready(node: dict) -> bool:
+    conditions = node.get("status", {}).get("conditions", [])
+    for condition in conditions:
+        if condition.get("type") == "Ready":
+            return str(condition.get("status", "False")) == "True"
+    return False
 
-    not_ready_nodes = []
-    for node in storage_nodes:
-        conditions = node.get("status", {}).get("conditions", [])
-        ready_status = "False"
-        for condition in conditions:
-            if condition.get("type") == "Ready":
-                ready_status = condition.get("status", "False")
-                break
-        if ready_status != "True":
-            not_ready_nodes.append(node["metadata"]["name"])
 
-    if not_ready_nodes:
-        logger.warning(
-            "Storage nodes not ready: %s. Skipping rebalance to avoid interference.",
-            ", ".join(not_ready_nodes),
-        )
-        return False
-
+def _find_unhealthy_volumes(
+    all_volumes: list[dict],
+) -> tuple[list[str], list[str], list[str]]:
     degraded = []
     faulted = []
     rebuilding = []
@@ -63,6 +53,23 @@ def check_cluster_health(api: object, namespace: str, storage_nodes: list[dict])
             degraded.append(name)
         elif state == "attached" and robustness == "rebuilding":
             rebuilding.append(name)
+    return faulted, degraded, rebuilding
+
+
+def check_cluster_health(api: object, namespace: str, storage_nodes: list[dict]) -> bool:
+    all_volumes = get_all_volumes(api, namespace)
+
+    not_ready_nodes = [
+        node["metadata"]["name"] for node in storage_nodes if not _is_node_ready(node)
+    ]
+    if not_ready_nodes:
+        logger.warning(
+            "Storage nodes not ready: %s. Skipping rebalance to avoid interference.",
+            ", ".join(not_ready_nodes),
+        )
+        return False
+
+    faulted, degraded, rebuilding = _find_unhealthy_volumes(all_volumes)
 
     if faulted:
         logger.warning(
