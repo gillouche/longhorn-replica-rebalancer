@@ -1,8 +1,9 @@
+import json
 from unittest.mock import MagicMock, patch
 
 from conftest import make_node, make_nodes, make_replica, make_volume
 
-from rebalancer.main import check_cluster_health, load_config, run
+from rebalancer.main import check_cluster_health, load_config, run, send_discord_notification
 
 NAMESPACE = "longhorn-system"
 
@@ -436,3 +437,29 @@ class TestRun:
 
         assert result == 0
         mock_api.delete_namespaced_custom_object.assert_called_once()
+
+
+class TestSendDiscordNotification:
+    @patch("rebalancer.main.urllib.request.urlopen")
+    def test_sends_failure_notification(self, mock_urlopen):
+        send_discord_notification("https://discord.com/webhook", "test failure", False)
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data)
+        assert payload["embeds"][0]["title"] == "Replica Rebalancer FAILED"
+        assert payload["embeds"][0]["color"] == 15158332
+
+    @patch("rebalancer.main.urllib.request.urlopen")
+    def test_sends_success_notification(self, mock_urlopen):
+        send_discord_notification("https://discord.com/webhook", "test success", True)
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data)
+        assert payload["embeds"][0]["title"] == "Replica Rebalancer"
+        assert payload["embeds"][0]["color"] == 3066993
+
+    @patch("rebalancer.main.urllib.request.urlopen", side_effect=Exception("network error"))
+    def test_handles_send_failure_gracefully(self, _mock_urlopen):
+        send_discord_notification("https://discord.com/webhook", "test", False)
