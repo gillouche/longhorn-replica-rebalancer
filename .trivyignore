@@ -1,2 +1,5 @@
 # Base image (python:3.14-slim-trixie / python-distroless) vulnerabilities
 # Add CVEs here when they are in upstream dependencies we cannot fix.
+
+# openssl - Denial of Service due to NULL pointer dereference in CMS EnvelopedData processing
+CVE-2026-28390
