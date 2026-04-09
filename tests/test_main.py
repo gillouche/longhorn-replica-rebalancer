@@ -272,11 +272,10 @@ class TestRun:
         mock_api = MagicMock()
         mock_client.CustomObjectsApi.return_value = mock_api
         nodes = make_nodes(3)
-        volumes = [make_volume("vol-a")]
+        volumes = [make_volume(f"vol-{c}") for c in "abcd"]
         replicas = [
-            make_replica("r1", "vol-a", "node-0"),
-            make_replica("r2", "vol-a", "node-1"),
-        ]
+            make_replica(f"r{i * 2 + 1}", f"vol-{c}", "node-0") for i, c in enumerate("abcd")
+        ] + [make_replica(f"r{i * 2 + 2}", f"vol-{c}", "node-1") for i, c in enumerate("abcd")]
         mock_api.list_namespaced_custom_object.side_effect = [
             {"items": nodes},
             {"items": volumes},
@@ -308,19 +307,24 @@ class TestRun:
         mock_api = MagicMock()
         mock_client.CustomObjectsApi.return_value = mock_api
         nodes = make_nodes(3)
-        volumes = [make_volume("vol-a"), make_volume("vol-b")]
+        volumes = [make_volume(f"vol-{c}") for c in "abcdef"]
         replicas_initial = [
-            make_replica("r1", "vol-a", "node-0"),
-            make_replica("r2", "vol-a", "node-1"),
-            make_replica("r3", "vol-b", "node-0"),
-            make_replica("r4", "vol-b", "node-1"),
-        ]
-        replicas_after_first = [
-            make_replica("r1", "vol-a", "node-0"),
-            make_replica("r2-new", "vol-a", "node-2"),
-            make_replica("r3", "vol-b", "node-0"),
-            make_replica("r4", "vol-b", "node-1"),
-        ]
+            make_replica(f"r{i * 2 + 1}", f"vol-{c}", "node-0") for i, c in enumerate("abcdef")
+        ] + [make_replica(f"r{i * 2 + 2}", f"vol-{c}", "node-1") for i, c in enumerate("abcdef")]
+        replicas_after_first = (
+            [
+                make_replica("r1", "vol-a", "node-0"),
+                make_replica("r2-new", "vol-a", "node-2"),
+            ]
+            + [
+                make_replica(f"r{i * 2 + 1}", f"vol-{c}", "node-0")
+                for i, c in enumerate("bcdef", start=1)
+            ]
+            + [
+                make_replica(f"r{i * 2 + 2}", f"vol-{c}", "node-1")
+                for i, c in enumerate("bcdef", start=1)
+            ]
+        )
         mock_api.list_namespaced_custom_object.side_effect = [
             {"items": nodes},
             {"items": volumes},

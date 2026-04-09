@@ -43,6 +43,13 @@ def find_imbalanced_volumes(
 ) -> list[str]:
     node_names = {n["metadata"]["name"] for n in storage_nodes}
     node_counts = count_replicas_per_node(placement, storage_nodes)
+
+    max_count = max(node_counts.values())
+    min_count = min(node_counts.values())
+    if max_count - min_count <= 1:
+        logger.info("Cluster is balanced (spread=%d), nothing to rebalance", max_count - min_count)
+        return []
+
     imbalanced = []
 
     for vol_name, node_replicas in placement.items():
@@ -52,7 +59,7 @@ def find_imbalanced_volumes(
             continue
         min_count_without = min(node_counts[n] for n in nodes_without)
         max_count_with = max(node_counts[n] for n in nodes_with_replicas)
-        if min_count_without < max_count_with:
+        if min_count_without < max_count_with - 1:
             imbalanced.append(vol_name)
 
     logger.info("Found %d imbalanced volumes", len(imbalanced))

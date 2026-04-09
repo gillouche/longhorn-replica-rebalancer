@@ -104,6 +104,99 @@ class TestFindImbalancedVolumes:
 
         assert set(imbalanced) == {"vol-a", "vol-b"}
 
+    def test_spread_of_1_is_balanced(self, three_nodes):
+        placement = {
+            "vol-a": {"node-0": ["r1"], "node-1": ["r2"]},
+            "vol-b": {"node-0": ["r3"], "node-2": ["r4"]},
+            "vol-c": {"node-1": ["r5"], "node-2": ["r6"]},
+        }
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert imbalanced == []
+
+    def test_11_12_11_is_balanced(self, three_nodes):
+        placement = {}
+        for i in range(6):
+            placement[f"vol-{i}a"] = {"node-0": [f"r{i}a1"], "node-1": [f"r{i}a2"]}
+        for i in range(5):
+            placement[f"vol-{i}b"] = {"node-1": [f"r{i}b1"], "node-2": [f"r{i}b2"]}
+        for i in range(5):
+            placement[f"vol-{i}c"] = {"node-0": [f"r{i}c1"], "node-2": [f"r{i}c2"]}
+
+        counts = count_replicas_per_node(placement, three_nodes)
+        assert counts == {"node-0": 11, "node-1": 11, "node-2": 10}
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert imbalanced == []
+
+    def test_10_12_10_is_imbalanced(self, three_nodes):
+        placement = {}
+        for i in range(6):
+            placement[f"vol-{i}a"] = {"node-0": [f"r{i}a1"], "node-1": [f"r{i}a2"]}
+        for i in range(6):
+            placement[f"vol-{i}b"] = {"node-1": [f"r{i}b1"], "node-2": [f"r{i}b2"]}
+        for i in range(4):
+            placement[f"vol-{i}c"] = {"node-0": [f"r{i}c1"], "node-2": [f"r{i}c2"]}
+
+        counts = count_replicas_per_node(placement, three_nodes)
+        assert counts == {"node-0": 10, "node-1": 12, "node-2": 10}
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert len(imbalanced) > 0
+
+    def test_5_5_0_is_imbalanced(self, three_nodes):
+        placement = {}
+        for i in range(5):
+            placement[f"vol-{i}"] = {"node-0": [f"r{i}1"], "node-1": [f"r{i}2"]}
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert len(imbalanced) == 5
+
+    def test_3_3_2_is_balanced(self, three_nodes):
+        placement = {
+            "vol-a": {"node-0": ["r1"], "node-1": ["r2"]},
+            "vol-b": {"node-0": ["r3"], "node-2": ["r4"]},
+            "vol-c": {"node-1": ["r5"], "node-2": ["r6"]},
+            "vol-d": {"node-0": ["r7"], "node-1": ["r8"]},
+        }
+
+        counts = count_replicas_per_node(placement, three_nodes)
+        assert counts == {"node-0": 3, "node-1": 3, "node-2": 2}
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert imbalanced == []
+
+    def test_4_4_0_is_imbalanced(self, three_nodes):
+        placement = {}
+        for i in range(4):
+            placement[f"vol-{i}"] = {"node-0": [f"r{i}1"], "node-1": [f"r{i}2"]}
+
+        counts = count_replicas_per_node(placement, three_nodes)
+        assert counts == {"node-0": 4, "node-1": 4, "node-2": 0}
+
+        imbalanced = find_imbalanced_volumes(placement, three_nodes)
+
+        assert len(imbalanced) == 4
+
+    @pytest.mark.parametrize("node_count", [3, 5])
+    def test_perfectly_balanced_returns_empty(self, node_count):
+        nodes = make_nodes(node_count)
+        placement = {}
+        node_pairs = [
+            (f"node-{i}", f"node-{j}") for i in range(node_count) for j in range(i + 1, node_count)
+        ]
+        for idx, pair in enumerate(node_pairs):
+            placement[f"vol-{idx}"] = {pair[0]: [f"r{idx}1"], pair[1]: [f"r{idx}2"]}
+
+        imbalanced = find_imbalanced_volumes(placement, nodes)
+
+        assert imbalanced == []
+
 
 class TestCountReplicasPerNode:
     def test_counts_replicas_across_all_volumes(self, three_nodes):
@@ -383,7 +476,7 @@ class TestEdgeCases:
         imbalanced = find_imbalanced_volumes(placement, three_nodes)
 
         assert "vol-3rep" not in imbalanced
-        assert "vol-normal" in imbalanced
+        assert len(imbalanced) == 0
 
     def test_volume_with_3_running_replicas_skipped_by_donor_selection(self, three_nodes):
         placement = {
