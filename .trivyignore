@@ -1,0 +1,5 @@
+# Base image (python:3.14-slim-trixie) vulnerabilities
+# These are in the Debian base image and will be fixed when the base image is updated.
+
+# openssl - Denial of Service due to NULL pointer dereference in CMS EnvelopedData processing
+CVE-2026-28390
